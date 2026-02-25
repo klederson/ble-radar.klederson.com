@@ -19,6 +19,7 @@ type shared struct {
 	bleScanner     *bluetooth.BLEScanner
 	classicScanner *bluetooth.ClassicScanner
 	mockScanner    *bluetooth.MockScanner
+	resolver       *bluetooth.NameResolver
 	hiddenDevices  map[string]bool
 	rssiHistory    map[string]*RSSIRing
 }
@@ -51,6 +52,7 @@ func New(demoMode bool, adapter string) AppModel {
 		shared: &shared{
 			store:         bluetooth.NewDeviceStore(),
 			sweep:         radar.NewSweep(),
+			resolver:      bluetooth.NewNameResolver(),
 			hiddenDevices: make(map[string]bool),
 			rssiHistory:   make(map[string]*RSSIRing),
 		},
@@ -86,6 +88,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.shared.rssiHistory[d.MAC] = ring
 			}
 			ring.Push(d.RSSI)
+		}
+
+		// Request name resolution for unnamed devices (real mode only)
+		if !m.demoMode {
+			for _, d := range m.devices {
+				if d.Name == "" && m.shared.resolver.ShouldResolve(d.MAC) {
+					m.shared.resolver.RequestResolve(d.MAC)
+				}
+			}
 		}
 
 		// Cursor stability: re-find selectedMAC after re-sort
@@ -352,6 +363,8 @@ func (m AppModel) View() string {
 
 // StartScanners initializes and starts scanners. Must be called before p.Run().
 func (m *AppModel) StartScanners(p *tea.Program) error {
+	m.shared.resolver.Start(p)
+
 	if m.demoMode {
 		m.shared.mockScanner = bluetooth.NewMockScanner()
 		return m.shared.mockScanner.Start(p)
@@ -372,6 +385,9 @@ func (m *AppModel) StartScanners(p *tea.Program) error {
 }
 
 func (m *AppModel) stopScanners() {
+	if m.shared.resolver != nil {
+		m.shared.resolver.Stop()
+	}
 	if m.shared.mockScanner != nil {
 		m.shared.mockScanner.Stop()
 	}

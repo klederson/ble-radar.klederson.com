@@ -44,9 +44,24 @@ func (s *BLEScanner) Start(p *tea.Program) error {
 			if !s.running {
 				return
 			}
+
+			name := result.LocalName()
+
+			// Fallback: identify device by manufacturer data
+			if name == "" {
+				mfrs := result.ManufacturerData()
+				if len(mfrs) > 0 {
+					if mfrName := LookupManufacturer(mfrs[0].CompanyID); mfrName != "" {
+						mac := result.Address.String()
+						suffix := mac[12:] // last 2 octets e.g. "EE:FF"
+						name = mfrName + " " + suffix
+					}
+				}
+			}
+
 			msg := DeviceDiscoveredMsg{
 				MAC:  result.Address.String(),
-				Name: result.LocalName(),
+				Name: name,
 				RSSI: result.RSSI,
 				Type: DeviceTypeBLE,
 			}

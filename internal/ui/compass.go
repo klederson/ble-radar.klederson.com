@@ -1,162 +1,174 @@
 package ui
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// RenderCompass renders a compass with an arrow pointing toward a device.
-// angle: radians (0=north, clockwise), distance: meters, rssi: dBm.
-func RenderCompass(width, height int, angle, distance, rssi float64) string {
+// RenderPerspective renders a first-person perspective view showing a device's
+// position in 3D space relative to the user. Grid lines converge toward a
+// vanishing point at the center, and the device is rendered as a marker at its
+// projected screen position.
+//
+// angle: radians (0=north, clockwise) - mapped to horizontal position
+// elevation: [-1, +1] where -1=below, 0=level, +1=above
+// distance: meters
+// rssi: dBm
+func RenderPerspective(width, height int, angle, elevation, distance, rssi float64) string {
 	if width < 9 || height < 5 {
 		return ""
 	}
 
 	grid := make([][]byte, height)
-	isArrow := make([][]bool, height)
+	cellType := make([][]int, height) // 0=empty, 1=grid, 2=label, 3=marker
 	for i := range grid {
 		grid[i] = make([]byte, width)
-		isArrow[i] = make([]bool, width)
+		cellType[i] = make([]int, width)
 		for j := range grid[i] {
 			grid[i][j] = ' '
 		}
 	}
 
-	fcx := float64(width) / 2.0
-	fcy := float64(height) / 2.0
-	rx := fcx - 2.0 // horizontal radius in columns
-	ry := fcy - 2.0 // vertical radius in rows
-	if rx < 3 {
-		rx = 3
-	}
-	if ry < 2 {
-		ry = 2
-	}
+	vpX := width / 2  // vanishing point X
+	vpY := height / 2 // vanishing point Y
 
-	// Draw compass ring
-	steps := 80
-	for i := 0; i < steps; i++ {
-		a := float64(i) * 2 * math.Pi / float64(steps)
-		col := int(math.Round(fcx + rx*math.Sin(a)))
-		row := int(math.Round(fcy - ry*math.Cos(a)))
-		if col >= 0 && col < width && row >= 0 && row < height && grid[row][col] == ' ' {
-			grid[row][col] = ringChar(a)
+	// Draw perspective floor lines from bottom corners to vanishing point
+	drawLine(grid, cellType, width, height, 0, height-1, vpX, vpY, '/', 1)
+	drawLine(grid, cellType, width, height, width-1, height-1, vpX, vpY, '\\', 1)
+
+	// Draw additional perspective lines for depth illusion
+	drawLine(grid, cellType, width, height, width/4, height-1, vpX, vpY, '/', 1)
+	drawLine(grid, cellType, width, height, width*3/4, height-1, vpX, vpY, '\\', 1)
+
+	// Draw ceiling lines from top corners to vanishing point
+	drawLine(grid, cellType, width, height, 0, 0, vpX, vpY, '\\', 1)
+	drawLine(grid, cellType, width, height, width-1, 0, vpX, vpY, '/', 1)
+
+	// Horizon line (dashed) at vertical center
+	for c := 0; c < width; c++ {
+		if grid[vpY][c] == ' ' {
+			if c%2 == 0 {
+				grid[vpY][c] = '-'
+			} else {
+				grid[vpY][c] = ' '
+			}
+			cellType[vpY][c] = 1
 		}
 	}
 
-	cx := int(math.Round(fcx))
-	cy := int(math.Round(fcy))
-
-	// Cardinal markers
-	nRow := cy - int(math.Round(ry)) - 1
-	sRow := cy + int(math.Round(ry)) + 1
-	eCol := cx + int(math.Round(rx)) + 1
-	wCol := cx - int(math.Round(rx)) - 1
-	setGrid(grid, width, height, cx, nRow, 'N')
-	setGrid(grid, width, height, cx, sRow, 'S')
-	setGrid(grid, width, height, eCol, cy, 'E')
-	setGrid(grid, width, height, wCol, cy, 'W')
-
-	// Cross hairs (faint axes)
-	for r := cy - int(ry) + 1; r < cy+int(ry); r++ {
-		if r != cy && grid[r][cx] == ' ' {
-			grid[r][cx] = ':'
-		}
-	}
-	for c := cx - int(rx) + 1; c < cx+int(rx); c++ {
-		if c != cx && grid[cy][c] == ' ' {
-			grid[cy][c] = '.'
+	// Vertical center line (dotted)
+	for r := 0; r < height; r++ {
+		if grid[r][vpX] == ' ' {
+			grid[r][vpX] = ':'
+			cellType[r][vpX] = 1
 		}
 	}
 
-	// Center
-	setGrid(grid, width, height, cx, cy, '+')
+	// Vanishing point marker
+	grid[vpY][vpX] = '+'
+	cellType[vpY][vpX] = 1
 
-	// Arrow from center toward device angle
-	// Length proportional to proximity (closer = longer arrow)
-	maxFrac := 0.85
-	minFrac := 0.3
-	distFrac := math.Min(distance/20.0, 1.0)
-	arrowFrac := maxFrac - (maxFrac-minFrac)*distFrac // closer = longer
+	// Map device angle to X in [-1, +1]
+	// angle is in radians (0=north, clockwise)
+	// Map so that: 0/2pi (north) = 0 (center), pi/2 (east) = +1 (right),
+	// pi (south) = 0 (behind, wrap), 3pi/2 (west) = -1 (left)
+	xNorm := math.Sin(angle) // -1 to +1, positive = right
+	yNorm := elevation       // -1 to +1, positive = above
 
-	sinA := math.Sin(angle)
-	cosA := math.Cos(angle)
+	// Perspective projection
+	// Normalize distance to [0,1] range: 0=close, 1=far
+	zNorm := math.Min(distance/20.0, 1.0)
+	focalLength := 1.0
+	perspScale := focalLength / (focalLength + zNorm*3.0)
 
-	// Draw shaft: step from center to tip
-	shaftSteps := int(math.Max(rx, ry) * arrowFrac)
-	if shaftSteps < 2 {
-		shaftSteps = 2
+	halfW := float64(width)/2.0 - 2.0
+	halfH := float64(height)/2.0 - 2.0
+
+	screenX := float64(vpX) + xNorm*perspScale*halfW
+	screenY := float64(vpY) - yNorm*perspScale*halfH
+
+	// Clamp to grid bounds
+	devCol := int(math.Round(screenX))
+	devRow := int(math.Round(screenY))
+	if devCol < 1 {
+		devCol = 1
+	}
+	if devCol >= width-1 {
+		devCol = width - 2
+	}
+	if devRow < 1 {
+		devRow = 1
+	}
+	if devRow >= height-1 {
+		devRow = height - 2
 	}
 
-	var tipCol, tipRow int
-	for s := 1; s <= shaftSteps; s++ {
-		t := float64(s) / float64(shaftSteps) * arrowFrac
-		fx := fcx + t*rx*sinA
-		fy := fcy - t*ry*cosA
-		col := int(math.Round(fx))
-		row := int(math.Round(fy))
-		if col >= 0 && col < width && row >= 0 && row < height {
-			ch := shaftChar(angle)
-			grid[row][col] = ch
-			isArrow[row][col] = true
-			tipCol = col
-			tipRow = row
-		}
+	// Device marker character based on distance
+	marker := deviceMarker(distance)
+	grid[devRow][devCol] = marker
+	cellType[devRow][devCol] = 3
+
+	// Position hint labels
+	if xNorm < -0.2 {
+		placeLabel(grid, cellType, width, height, 1, vpY, "<")
+	} else if xNorm > 0.2 {
+		placeLabel(grid, cellType, width, height, width-2, vpY, ">")
 	}
 
-	// Arrowhead at tip
-	tipCh := arrowTip(angle)
-	if tipCol >= 0 && tipCol < width && tipRow >= 0 && tipRow < height {
-		grid[tipRow][tipCol] = tipCh
-		isArrow[tipRow][tipCol] = true
+	if yNorm > 0.2 {
+		lbl := "ABOVE"
+		col := vpX - len(lbl)/2
+		placeLabel(grid, cellType, width, height, col, 0, lbl)
+	}
+	if yNorm < -0.2 {
+		lbl := "BELOW"
+		col := vpX - len(lbl)/2
+		placeLabel(grid, cellType, width, height, col, height-1, lbl)
 	}
 
-	// Small wing lines at tip
-	wingLen := 2
-	wingAngleL := angle - math.Pi*0.8
-	wingAngleR := angle + math.Pi*0.8
-	for w := 1; w <= wingLen; w++ {
-		t := float64(w) * 0.4
-		// Left wing
-		wlc := int(math.Round(float64(tipCol) + t*rx/float64(shaftSteps)*math.Sin(wingAngleL)*2))
-		wlr := int(math.Round(float64(tipRow) - t*ry/float64(shaftSteps)*math.Cos(wingAngleL)*2))
-		if wlc >= 0 && wlc < width && wlr >= 0 && wlr < height {
-			grid[wlr][wlc] = shaftChar(wingAngleL)
-			isArrow[wlr][wlc] = true
-		}
-		// Right wing
-		wrc := int(math.Round(float64(tipCol) + t*rx/float64(shaftSteps)*math.Sin(wingAngleR)*2))
-		wrr := int(math.Round(float64(tipRow) - t*ry/float64(shaftSteps)*math.Cos(wingAngleR)*2))
-		if wrc >= 0 && wrc < width && wrr >= 0 && wrr < height {
-			grid[wrr][wrc] = shaftChar(wingAngleR)
-			isArrow[wrr][wrc] = true
-		}
+	// Distance label near marker
+	distStr := fmt.Sprintf("~%.1fm", distance)
+	lblRow := devRow + 1
+	if lblRow >= height {
+		lblRow = devRow - 1
 	}
+	lblCol := devCol - len(distStr)/2
+	if lblCol < 0 {
+		lblCol = 0
+	}
+	if lblCol+len(distStr) > width {
+		lblCol = width - len(distStr)
+	}
+	placeLabel(grid, cellType, width, height, lblCol, lblRow, distStr)
 
 	// Render with colors
-	arrowColor := proximityColor(rssi)
-	arrowSty := lipgloss.NewStyle().Foreground(lipgloss.Color(arrowColor)).Bold(true)
-	ringSty := lipgloss.NewStyle().Foreground(ColorDimGreen)
+	markerColor := proximityColor(rssi)
+	markerSty := lipgloss.NewStyle().Foreground(lipgloss.Color(markerColor)).Bold(true)
+	gridSty := lipgloss.NewStyle().Foreground(ColorDimGreen)
+	labelSty := lipgloss.NewStyle().Foreground(ColorMidGreen)
 	axisSty := lipgloss.NewStyle().Foreground(lipgloss.Color("#003300"))
-	markSty := lipgloss.NewStyle().Foreground(ColorMatrixGreen).Bold(true)
 
 	var sb strings.Builder
 	for row := 0; row < height; row++ {
 		for col := 0; col < width; col++ {
 			ch := grid[row][col]
+			ct := cellType[row][col]
 			switch {
-			case ch == 'N' || ch == 'S' || ch == 'E' || ch == 'W':
-				sb.WriteString(markSty.Render(string(ch)))
+			case ct == 3:
+				sb.WriteString(markerSty.Render(string(ch)))
+			case ct == 2:
+				sb.WriteString(labelSty.Render(string(ch)))
 			case ch == '+':
-				sb.WriteString(markSty.Render(string(ch)))
-			case isArrow[row][col]:
-				sb.WriteString(arrowSty.Render(string(ch)))
-			case ch == ':' || ch == '.':
+				sb.WriteString(labelSty.Render(string(ch)))
+			case ch == ':' || (ch == '-' && row == vpY):
 				sb.WriteString(axisSty.Render(string(ch)))
+			case ct == 1:
+				sb.WriteString(gridSty.Render(string(ch)))
 			case ch != ' ':
-				sb.WriteString(ringSty.Render(string(ch)))
+				sb.WriteString(gridSty.Render(string(ch)))
 			default:
 				sb.WriteByte(' ')
 			}
@@ -169,92 +181,80 @@ func RenderCompass(width, height int, angle, distance, rssi float64) string {
 	return sb.String()
 }
 
-func setGrid(grid [][]byte, w, h, col, row int, ch byte) {
-	if col >= 0 && col < w && row >= 0 && row < h {
-		grid[row][col] = ch
+// drawLine uses parametric stepping to draw a line between two points.
+func drawLine(grid [][]byte, cellType [][]int, w, h, x0, y0, x1, y1 int, ch byte, ct int) {
+	dx := x1 - x0
+	dy := y1 - y0
+	steps := intAbs(dx)
+	if intAbs(dy) > steps {
+		steps = intAbs(dy)
+	}
+	if steps == 0 {
+		return
+	}
+
+	for i := 0; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		col := int(math.Round(float64(x0) + t*float64(dx)))
+		row := int(math.Round(float64(y0) + t*float64(dy)))
+		if col >= 0 && col < w && row >= 0 && row < h {
+			if grid[row][col] == ' ' {
+				// Pick line character based on slope
+				grid[row][col] = lineChar(dx, dy)
+				cellType[row][col] = ct
+			}
+		}
 	}
 }
 
-func ringChar(a float64) byte {
-	for a < 0 {
-		a += 2 * math.Pi
+// lineChar picks an appropriate ASCII character based on line direction.
+func lineChar(dx, dy int) byte {
+	if dx == 0 {
+		return ':'
 	}
-	for a >= 2*math.Pi {
-		a -= 2 * math.Pi
-	}
-	sector := int(math.Round(a/(math.Pi/4))) % 8
-	switch sector {
-	case 0:
+	if dy == 0 {
 		return '-'
-	case 1:
-		return '\\'
-	case 2:
-		return '|'
-	case 3:
-		return '/'
-	case 4:
-		return '-'
-	case 5:
-		return '\\'
-	case 6:
-		return '|'
-	case 7:
-		return '/'
 	}
-	return '-'
+	slope := float64(dy) / float64(dx)
+	absSlope := math.Abs(slope)
+	if absSlope > 2.0 {
+		return ':'
+	}
+	if absSlope < 0.5 {
+		return '-'
+	}
+	if (dx > 0 && dy > 0) || (dx < 0 && dy < 0) {
+		return '\\'
+	}
+	return '/'
 }
 
-// shaftChar returns the line character for a given angle direction.
-func shaftChar(a float64) byte {
-	for a < 0 {
-		a += 2 * math.Pi
+// deviceMarker returns the marker character based on distance.
+func deviceMarker(distance float64) byte {
+	if distance < 2.0 {
+		return '@'
 	}
-	for a >= 2*math.Pi {
-		a -= 2 * math.Pi
+	if distance < 5.0 {
+		return 'O'
 	}
-	// 8 direction sectors
-	sector := int(math.Round(a/(math.Pi/4))) % 8
-	switch sector {
-	case 0, 4: // N, S
-		return '|'
-	case 2, 6: // E, W
-		return '-'
-	case 1, 5: // NE, SW
-		return '\\'
-	case 3, 7: // SE, NW
-		return '/'
+	if distance < 10.0 {
+		return 'o'
 	}
-	return '|'
+	return '.'
 }
 
-// arrowTip returns the arrowhead character for a given angle.
-func arrowTip(a float64) byte {
-	for a < 0 {
-		a += 2 * math.Pi
+// placeLabel writes a string into the grid at the given position.
+func placeLabel(grid [][]byte, cellType [][]int, w, h, col, row int, label string) {
+	if row < 0 || row >= h {
+		return
 	}
-	for a >= 2*math.Pi {
-		a -= 2 * math.Pi
+	for i, ch := range label {
+		c := col + i
+		if c >= 0 && c < w {
+			grid[row][c] = byte(ch)
+			cellType[row][c] = 2
+		}
 	}
-	sector := int(math.Round(a/(math.Pi/4))) % 8
-	switch sector {
-	case 0: // N
-		return '^'
-	case 1: // NE
-		return '/'
-	case 2: // E
-		return '>'
-	case 3: // SE
-		return '\\'
-	case 4: // S
-		return 'v'
-	case 5: // SW
-		return '/'
-	case 6: // W
-		return '<'
-	case 7: // NW
-		return '\\'
-	}
-	return '*'
 }
 
 func intAbs(x int) int {

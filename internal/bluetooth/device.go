@@ -24,13 +24,14 @@ func (dt DeviceType) String() string {
 
 // Device represents a discovered Bluetooth device.
 type Device struct {
-	MAC      string
-	Name     string
-	RSSI     float64
-	Type     DeviceType
-	LastSeen time.Time
-	Angle    float64 // Radians, 0=north, clockwise
-	Distance float64 // Estimated distance in meters
+	MAC       string
+	Name      string
+	RSSI      float64
+	Type      DeviceType
+	LastSeen  time.Time
+	Angle     float64 // Radians, 0=north, clockwise
+	Distance  float64 // Estimated distance in meters
+	Elevation float64 // [-1, +1], 0=same level, +1=above, -1=below
 }
 
 // Symbol returns the radar character for this device type.
@@ -55,6 +56,15 @@ func MacToAngle(mac string) float64 {
 	h := sha256.Sum256([]byte(mac))
 	val := binary.BigEndian.Uint32(h[:4])
 	return float64(val) / float64(math.MaxUint32) * 2 * math.Pi
+}
+
+// MacToElevation derives a consistent elevation from a MAC address using a hash.
+// Returns a value in [-1, +1], where -1=below, 0=level, +1=above.
+// Uses bytes 4-7 of SHA256 (separate from angle which uses 0-3).
+func MacToElevation(mac string) float64 {
+	h := sha256.Sum256([]byte(mac))
+	val := binary.BigEndian.Uint32(h[4:8])
+	return float64(val)/float64(math.MaxUint32)*2 - 1
 }
 
 // RSSIToDistance estimates distance from RSSI using the log-distance path loss model.

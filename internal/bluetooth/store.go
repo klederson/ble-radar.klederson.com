@@ -45,13 +45,14 @@ func (s *DeviceStore) Upsert(mac, name string, rssi float64, dtype DeviceType) {
 	dist := RSSIToDistance(rssi, config.MeasuredPower, config.PathLossExp)
 
 	s.devices[mac] = &Device{
-		MAC:      mac,
-		Name:     name,
-		RSSI:     rssi,
-		Type:     dtype,
-		LastSeen: now,
-		Angle:    angle,
-		Distance: dist,
+		MAC:       mac,
+		Name:      name,
+		RSSI:      rssi,
+		Type:      dtype,
+		LastSeen:  now,
+		Angle:     angle,
+		Distance:  dist,
+		Elevation: MacToElevation(mac),
 	}
 }
 

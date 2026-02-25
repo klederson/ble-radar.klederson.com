@@ -81,7 +81,7 @@ func RenderDetailPanel(d *bluetooth.Device, width, height int, rssiHistory []flo
 		compassW = compassH * 3 // keep roughly proportional
 	}
 
-	compass := RenderCompass(compassW, compassH, d.Angle, d.Distance, d.RSSI)
+	compass := RenderPerspective(compassW, compassH, d.Angle, d.Elevation, d.Distance, d.RSSI)
 	if compass != "" {
 		// Center compass horizontally
 		compassLines := strings.Split(compass, "\n")
@@ -97,7 +97,8 @@ func RenderDetailPanel(d *bluetooth.Device, width, height int, rssiHistory []flo
 
 	// Direction + distance label centered below compass
 	dir := angleToDir(d.Angle)
-	distLabel := fmt.Sprintf("~%.1fm  %s  %ddBm", d.Distance, dir, int(d.RSSI))
+	vertLabel := elevationLabel(d.Elevation)
+	distLabel := fmt.Sprintf("~%.1fm  %s  %s  %ddBm", d.Distance, dir, vertLabel, int(d.RSSI))
 	distPad := (innerW - len(distLabel)) / 2
 	if distPad < 0 {
 		distPad = 0
@@ -184,6 +185,16 @@ func angleToDir(a float64) string {
 	dirs := []string{"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
 	idx := int(math.Round(a/(math.Pi/4))) % 8
 	return dirs[idx]
+}
+
+func elevationLabel(elev float64) string {
+	if elev > 0.2 {
+		return "above"
+	}
+	if elev < -0.2 {
+		return "below"
+	}
+	return "level"
 }
 
 func formatLastSeen(t time.Time) string {

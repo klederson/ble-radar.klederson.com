@@ -7,16 +7,27 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// RenderMenuBar renders the top menu bar.
-func RenderMenuBar(width int, adapter string, scanning bool) string {
+// RenderMenuBar renders the top menu bar with context-aware key hints.
+func RenderMenuBar(width int, adapter string, scanning bool, detailOpen bool) string {
 	title := fmt.Sprintf(" %s v%s ", config.AppName, config.AppVersion)
 
-	keys := []struct{ key, label string }{
-		{"S", "can"},
-		{"P", "ause"},
-		{"F", "ilter"},
-		{"H", "elp"},
-		{"Q", "uit"},
+	var keys []struct{ key, label string }
+
+	if detailOpen {
+		keys = []struct{ key, label string }{
+			{"Esc", " close"},
+			{"j/k", " navigate"},
+			{"Q", "uit"},
+		}
+	} else {
+		keys = []struct{ key, label string }{
+			{"Enter", " detail"},
+			{"Space", " toggle"},
+			{"I", "solate"},
+			{"S", "can"},
+			{"P", "ause"},
+			{"Q", "uit"},
+		}
 	}
 
 	menu := ""

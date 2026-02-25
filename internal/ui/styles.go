@@ -109,4 +109,17 @@ var (
 
 	StyleHelp = lipgloss.NewStyle().
 			Foreground(ColorDimGreen)
+
+	StyleCursorLine = lipgloss.NewStyle().
+			Background(lipgloss.Color("#003300"))
+
+	StyleCheckOn = lipgloss.NewStyle().
+			Foreground(ColorGreen)
+
+	StyleCheckOff = lipgloss.NewStyle().
+			Foreground(ColorDimGreen)
+
+	StyleIsolateMarker = lipgloss.NewStyle().
+				Foreground(ColorWarning).
+				Bold(true)
 )

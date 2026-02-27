@@ -29,6 +29,11 @@ var mockDeviceTemplates = []struct {
 	{"Nintendo Switch", DeviceTypeClassic},
 	{"iPad Pro", DeviceTypeBLE},
 	{"OnePlus Buds 3", DeviceTypeBLE},
+	{"HomeNetwork_2G", DeviceTypeWiFi},
+	{"XFINITY-7A3F", DeviceTypeWiFi},
+	{"TP-Link_5GHz", DeviceTypeWiFi},
+	{"AndroidAP", DeviceTypeWiFi},
+	{"Starlink_WiFi", DeviceTypeWiFi},
 }
 
 type mockDevice struct {
@@ -39,6 +44,8 @@ type mockDevice struct {
 	phase     float64
 	amplitude float64
 	active    bool
+	freq      int
+	channel   int
 }
 
 // MockScanner generates fake devices for demo mode.
@@ -49,15 +56,60 @@ type MockScanner struct {
 	cancel   context.CancelFunc
 }
 
+// 5 GHz channel options for mock WiFi devices.
+var wifi5GChannels = []int{36, 40, 44, 48, 149, 153, 157, 161}
+
 // NewMockScanner creates a mock scanner with random fake devices.
 func NewMockScanner() *MockScanner {
-	count := 8 + rand.Intn(5) // 8-12 devices
-	devices := make([]mockDevice, count)
+	// Separate templates by type to guarantee representation
+	var bleTmpls, clsTmpls, wifiTmpls []int
+	for i, t := range mockDeviceTemplates {
+		switch t.Type {
+		case DeviceTypeBLE:
+			bleTmpls = append(bleTmpls, i)
+		case DeviceTypeClassic:
+			clsTmpls = append(clsTmpls, i)
+		case DeviceTypeWiFi:
+			wifiTmpls = append(wifiTmpls, i)
+		}
+	}
 
-	perm := rand.Perm(len(mockDeviceTemplates))
-	for i := 0; i < count; i++ {
-		tmpl := mockDeviceTemplates[perm[i%len(mockDeviceTemplates)]]
-		devices[i] = mockDevice{
+	// Pick guaranteed minimums from each type
+	var picked []int
+	blePerm := rand.Perm(len(bleTmpls))
+	for i := 0; i < 5 && i < len(blePerm); i++ {
+		picked = append(picked, bleTmpls[blePerm[i]])
+	}
+	clsPerm := rand.Perm(len(clsTmpls))
+	for i := 0; i < 2 && i < len(clsPerm); i++ {
+		picked = append(picked, clsTmpls[clsPerm[i]])
+	}
+	wifiPerm := rand.Perm(len(wifiTmpls))
+	for i := 0; i < 3 && i < len(wifiPerm); i++ {
+		picked = append(picked, wifiTmpls[wifiPerm[i]])
+	}
+
+	// Add a few more random ones up to 12-15 total
+	total := 12 + rand.Intn(4)
+	allPerm := rand.Perm(len(mockDeviceTemplates))
+	usedSet := make(map[int]bool, len(picked))
+	for _, p := range picked {
+		usedSet[p] = true
+	}
+	for _, idx := range allPerm {
+		if len(picked) >= total {
+			break
+		}
+		if !usedSet[idx] {
+			picked = append(picked, idx)
+			usedSet[idx] = true
+		}
+	}
+
+	devices := make([]mockDevice, len(picked))
+	for i, ti := range picked {
+		tmpl := mockDeviceTemplates[ti]
+		md := mockDevice{
 			mac:       randomMAC(),
 			name:      tmpl.Name,
 			dtype:     tmpl.Type,
@@ -66,6 +118,19 @@ func NewMockScanner() *MockScanner {
 			amplitude: 3 + rand.Float64()*8, // 3-11 dBm fluctuation
 			active:    true,
 		}
+		if tmpl.Type == DeviceTypeWiFi {
+			if rand.Intn(2) == 0 {
+				// 2.4 GHz
+				md.freq = 2412 + rand.Intn(11)*5
+				md.channel = (md.freq - 2407) / 5
+			} else {
+				// 5 GHz
+				ch := wifi5GChannels[rand.Intn(len(wifi5GChannels))]
+				md.channel = ch
+				md.freq = 5000 + ch*5
+			}
+		}
+		devices[i] = md
 	}
 
 	return &MockScanner{devices: devices}
@@ -124,10 +189,12 @@ func (s *MockScanner) emitDevices(t float64) {
 		}
 
 		msg := DeviceDiscoveredMsg{
-			MAC:  d.mac,
-			Name: name,
-			RSSI: int16(rssi),
-			Type: d.dtype,
+			MAC:       d.mac,
+			Name:      name,
+			RSSI:      int16(rssi),
+			Type:      d.dtype,
+			Frequency: d.freq,
+			Channel:   d.channel,
 		}
 		if s.program != nil {
 			s.program.Send(msg)

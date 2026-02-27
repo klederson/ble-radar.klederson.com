@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"time"
 
 	"ble-radar.klederson.com/internal/bluetooth"
@@ -18,6 +19,7 @@ type shared struct {
 	sweep          *radar.Sweep
 	bleScanner     *bluetooth.BLEScanner
 	classicScanner *bluetooth.ClassicScanner
+	wifiScanner    *bluetooth.WiFiScanner
 	mockScanner    *bluetooth.MockScanner
 	resolver       *bluetooth.NameResolver
 	hiddenDevices  map[string]bool
@@ -37,6 +39,14 @@ type AppModel struct {
 	detailOpen  bool
 	isolateMAC  string
 
+	// Filter state
+	filterBLE     bool
+	filterClassic bool
+	filterWiFi    bool
+	filterSearch  string
+	filterActive  bool
+	filteredView  []*bluetooth.Device
+
 	shared *shared
 
 	// Cached snapshot
@@ -46,9 +56,12 @@ type AppModel struct {
 // New creates a new AppModel.
 func New(demoMode bool, adapter string) AppModel {
 	return AppModel{
-		scanning: true,
-		demoMode: demoMode,
-		adapter:  adapter,
+		scanning:      true,
+		demoMode:      demoMode,
+		adapter:       adapter,
+		filterBLE:     true,
+		filterClassic: true,
+		filterWiFi:    true,
 		shared: &shared{
 			store:         bluetooth.NewDeviceStore(),
 			sweep:         radar.NewSweep(),
@@ -79,6 +92,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		m.shared.sweep.Update()
 		m.devices = m.shared.store.Snapshot()
+		m.filteredView = m.filteredDevices()
 
 		// Record RSSI history
 		for _, d := range m.devices {
@@ -102,7 +116,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cursor stability: re-find selectedMAC after re-sort
 		if m.selectedMAC != "" {
 			found := false
-			for i, d := range m.devices {
+			for i, d := range m.filteredView {
 				if d.MAC == m.selectedMAC {
 					m.cursorIndex = i
 					found = true
@@ -117,7 +131,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Auto-close detail if device gone
-		if m.detailOpen && (len(m.devices) == 0 || m.cursorIndex >= len(m.devices)) {
+		if m.detailOpen && (len(m.filteredView) == 0 || m.cursorIndex >= len(m.filteredView)) {
 			m.detailOpen = false
 		}
 
@@ -150,7 +164,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case bluetooth.DeviceDiscoveredMsg:
 		if m.scanning {
-			m.shared.store.Upsert(msg.MAC, msg.Name, float64(msg.RSSI), msg.Type)
+			m.shared.store.Upsert(msg.MAC, msg.Name, float64(msg.RSSI), msg.Type, msg.Frequency, msg.Channel)
 		}
 		return m, nil
 
@@ -162,6 +176,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.filterActive {
+		return m.handleKeyFilter(msg)
+	}
 	if m.detailOpen {
 		return m.handleKeyDetail(msg)
 	}
@@ -189,7 +206,7 @@ func (m AppModel) handleKeyNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down", "j":
-		if m.cursorIndex < len(m.devices)-1 {
+		if m.cursorIndex < len(m.filteredView)-1 {
 			m.cursorIndex++
 			m.syncSelectedMAC()
 		}
@@ -199,20 +216,20 @@ func (m AppModel) handleKeyNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncSelectedMAC()
 
 	case "end":
-		if len(m.devices) > 0 {
-			m.cursorIndex = len(m.devices) - 1
+		if len(m.filteredView) > 0 {
+			m.cursorIndex = len(m.filteredView) - 1
 			m.syncSelectedMAC()
 		}
 
 	case "enter":
-		if len(m.devices) > 0 && m.cursorIndex < len(m.devices) {
+		if len(m.filteredView) > 0 && m.cursorIndex < len(m.filteredView) {
 			m.detailOpen = true
 		}
 
 	case "shift+enter", "I":
 		// Toggle isolate mode
-		if len(m.devices) > 0 && m.cursorIndex < len(m.devices) {
-			mac := m.devices[m.cursorIndex].MAC
+		if len(m.filteredView) > 0 && m.cursorIndex < len(m.filteredView) {
+			mac := m.filteredView[m.cursorIndex].MAC
 			if m.isolateMAC == mac {
 				m.isolateMAC = ""
 			} else {
@@ -222,14 +239,29 @@ func (m AppModel) handleKeyNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case " ", "v":
 		// Toggle device visibility on radar
-		if len(m.devices) > 0 && m.cursorIndex < len(m.devices) {
-			mac := m.devices[m.cursorIndex].MAC
+		if len(m.filteredView) > 0 && m.cursorIndex < len(m.filteredView) {
+			mac := m.filteredView[m.cursorIndex].MAC
 			if m.shared.hiddenDevices[mac] {
 				delete(m.shared.hiddenDevices, mac)
 			} else {
 				m.shared.hiddenDevices[mac] = true
 			}
 		}
+
+	case "1":
+		m.filterBLE = !m.filterBLE
+		m.refreshFilter()
+
+	case "2":
+		m.filterClassic = !m.filterClassic
+		m.refreshFilter()
+
+	case "3":
+		m.filterWiFi = !m.filterWiFi
+		m.refreshFilter()
+
+	case "/":
+		m.filterActive = true
 	}
 
 	return m, nil
@@ -251,7 +283,7 @@ func (m AppModel) handleKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down", "j":
-		if m.cursorIndex < len(m.devices)-1 {
+		if m.cursorIndex < len(m.filteredView)-1 {
 			m.cursorIndex++
 			m.syncSelectedMAC()
 		}
@@ -261,30 +293,32 @@ func (m AppModel) handleKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AppModel) syncSelectedMAC() {
-	if m.cursorIndex >= 0 && m.cursorIndex < len(m.devices) {
-		m.selectedMAC = m.devices[m.cursorIndex].MAC
+	if m.cursorIndex >= 0 && m.cursorIndex < len(m.filteredView) {
+		m.selectedMAC = m.filteredView[m.cursorIndex].MAC
 	}
 }
 
 func (m *AppModel) clampCursor() {
-	if len(m.devices) == 0 {
+	if len(m.filteredView) == 0 {
 		m.cursorIndex = 0
 		m.selectedMAC = ""
 		return
 	}
-	if m.cursorIndex >= len(m.devices) {
-		m.cursorIndex = len(m.devices) - 1
+	if m.cursorIndex >= len(m.filteredView) {
+		m.cursorIndex = len(m.filteredView) - 1
 	}
 	if m.cursorIndex < 0 {
 		m.cursorIndex = 0
 	}
-	m.selectedMAC = m.devices[m.cursorIndex].MAC
+	m.selectedMAC = m.filteredView[m.cursorIndex].MAC
 }
 
 // visibleDevices returns the devices that should appear on the radar.
 func (m AppModel) visibleDevices() []*bluetooth.Device {
+	base := m.filteredView
+
 	if m.isolateMAC != "" {
-		for _, d := range m.devices {
+		for _, d := range base {
 			if d.MAC == m.isolateMAC {
 				return []*bluetooth.Device{d}
 			}
@@ -293,11 +327,11 @@ func (m AppModel) visibleDevices() []*bluetooth.Device {
 	}
 
 	if len(m.shared.hiddenDevices) == 0 {
-		return m.devices
+		return base
 	}
 
-	result := make([]*bluetooth.Device, 0, len(m.devices))
-	for _, d := range m.devices {
+	result := make([]*bluetooth.Device, 0, len(base))
+	for _, d := range base {
 		if !m.shared.hiddenDevices[d.MAC] {
 			result = append(result, d)
 		}
@@ -327,11 +361,11 @@ func (m AppModel) View() string {
 		radarW = m.width - listW
 	}
 
-	menuBar := ui.RenderMenuBar(m.width, m.adapter, m.scanning, m.detailOpen)
+	menuBar := ui.RenderMenuBar(m.width, m.adapter, m.scanning, m.detailOpen, m.filterActive)
 
 	var leftPanel string
-	if m.detailOpen && m.cursorIndex >= 0 && m.cursorIndex < len(m.devices) {
-		d := m.devices[m.cursorIndex]
+	if m.detailOpen && m.cursorIndex >= 0 && m.cursorIndex < len(m.filteredView) {
+		d := m.filteredView[m.cursorIndex]
 		var history []float64
 		if ring, ok := m.shared.rssiHistory[d.MAC]; ok {
 			history = ring.Values()
@@ -351,11 +385,18 @@ func (m AppModel) View() string {
 		leftPanel = ui.RenderRadarPanel(radarW, bodyH, radarContent, legend)
 	}
 
-	deviceList := ui.RenderDeviceList(m.devices, listW, bodyH, m.cursorIndex, m.shared.hiddenDevices, m.isolateMAC)
+	filter := ui.FilterState{
+		BLE:     m.filterBLE,
+		Classic: m.filterClassic,
+		WiFi:    m.filterWiFi,
+		Search:  m.filterSearch,
+		Active:  m.filterActive,
+	}
+	deviceList := ui.RenderDeviceList(m.filteredView, listW, bodyH, m.cursorIndex, m.shared.hiddenDevices, m.isolateMAC, filter)
 
 	total := m.shared.store.Count()
-	ble, classic := m.shared.store.CountByType()
-	statusBar := ui.RenderStatusBar(m.width, m.scanning, total, ble, classic,
+	ble, classic, wifi := m.shared.store.CountByType()
+	statusBar := ui.RenderStatusBar(m.width, m.scanning, total, ble, classic, wifi,
 		m.shared.sweep.Degrees(), config.MaxRange)
 
 	return ui.ComposeLayout(menuBar, leftPanel, deviceList, statusBar, m.width)
@@ -381,6 +422,12 @@ func (m *AppModel) StartScanners(p *tea.Program) error {
 		_ = m.shared.classicScanner.Start(p)
 	}
 
+	if bluetooth.WiFiScannerAvailable() {
+		m.shared.wifiScanner = bluetooth.NewWiFiScanner("",
+			time.Duration(config.WiFiScanSec)*time.Second)
+		_ = m.shared.wifiScanner.Start(p)
+	}
+
 	return nil
 }
 
@@ -397,6 +444,77 @@ func (m *AppModel) stopScanners() {
 	if m.shared.classicScanner != nil {
 		m.shared.classicScanner.Stop()
 	}
+	if m.shared.wifiScanner != nil {
+		m.shared.wifiScanner.Stop()
+	}
+}
+
+// filteredDevices returns a filtered copy of devices based on type toggles and search.
+func (m AppModel) filteredDevices() []*bluetooth.Device {
+	result := make([]*bluetooth.Device, 0, len(m.devices))
+	search := strings.ToLower(m.filterSearch)
+	for _, d := range m.devices {
+		// Type filter
+		switch d.Type {
+		case bluetooth.DeviceTypeBLE:
+			if !m.filterBLE {
+				continue
+			}
+		case bluetooth.DeviceTypeClassic:
+			if !m.filterClassic {
+				continue
+			}
+		case bluetooth.DeviceTypeWiFi:
+			if !m.filterWiFi {
+				continue
+			}
+		}
+		// Text search
+		if search != "" {
+			nameLower := strings.ToLower(d.Name)
+			macLower := strings.ToLower(d.MAC)
+			if !strings.Contains(nameLower, search) && !strings.Contains(macLower, search) {
+				continue
+			}
+		}
+		result = append(result, d)
+	}
+	return result
+}
+
+func (m AppModel) handleKeyFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc", "enter":
+		m.filterActive = false
+	case "backspace":
+		if len(m.filterSearch) > 0 {
+			m.filterSearch = m.filterSearch[:len(m.filterSearch)-1]
+			m.refreshFilter()
+		}
+	default:
+		// Accept printable ASCII characters
+		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
+			m.filterSearch += key
+			m.refreshFilter()
+		}
+	}
+	return m, nil
+}
+
+func (m *AppModel) refreshFilter() {
+	savedMAC := m.selectedMAC
+	m.filteredView = m.filteredDevices()
+	// Try to re-anchor cursor by MAC
+	if savedMAC != "" {
+		for i, d := range m.filteredView {
+			if d.MAC == savedMAC {
+				m.cursorIndex = i
+				return
+			}
+		}
+	}
+	m.clampCursor()
 }
 
 func tickCmd() tea.Cmd {

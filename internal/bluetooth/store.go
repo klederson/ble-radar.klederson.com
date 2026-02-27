@@ -23,7 +23,7 @@ func NewDeviceStore() *DeviceStore {
 
 // Upsert adds or updates a device. If the device already exists, RSSI is
 // smoothed using EMA and the angle is preserved for position consistency.
-func (s *DeviceStore) Upsert(mac, name string, rssi float64, dtype DeviceType) {
+func (s *DeviceStore) Upsert(mac, name string, rssi float64, dtype DeviceType, freq, channel int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -36,6 +36,10 @@ func (s *DeviceStore) Upsert(mac, name string, rssi float64, dtype DeviceType) {
 		existing.LastSeen = now
 		if name != "" {
 			existing.Name = name
+		}
+		if freq != 0 {
+			existing.Frequency = freq
+			existing.Channel = channel
 		}
 		return
 	}
@@ -53,6 +57,8 @@ func (s *DeviceStore) Upsert(mac, name string, rssi float64, dtype DeviceType) {
 		Angle:     angle,
 		Distance:  dist,
 		Elevation: MacToElevation(mac),
+		Frequency: freq,
+		Channel:   channel,
 	}
 }
 
@@ -99,13 +105,16 @@ func (s *DeviceStore) Count() int {
 }
 
 // CountByType returns counts broken down by device type.
-func (s *DeviceStore) CountByType() (ble, classic int) {
+func (s *DeviceStore) CountByType() (ble, classic, wifi int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, d := range s.devices {
-		if d.Type == DeviceTypeClassic {
+		switch d.Type {
+		case DeviceTypeClassic:
 			classic++
-		} else {
+		case DeviceTypeWiFi:
+			wifi++
+		default:
 			ble++
 		}
 	}

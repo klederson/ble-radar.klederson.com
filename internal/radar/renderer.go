@@ -15,19 +15,23 @@ var (
 	colorBright    = lipgloss.Color("#00FF41")
 	colorMid       = lipgloss.Color("#008F11")
 	colorDim       = lipgloss.Color("#004A0A")
-	colorDeviceBLE = lipgloss.Color("#00FFAA")
-	colorDeviceCls = lipgloss.Color("#33FF66")
-	colorLabelDim  = lipgloss.Color("#008F11")
+	colorDeviceBLE  = lipgloss.Color("#00FFAA")
+	colorDeviceCls  = lipgloss.Color("#33FF66")
+	colorDeviceWiFi = lipgloss.Color("#FFCC00")
+	colorLabelDim   = lipgloss.Color("#008F11")
 
 	styleCenter   = lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 	styleRing     = lipgloss.NewStyle().Foreground(colorMid)
 	styleDot      = lipgloss.NewStyle().Foreground(colorDim)
 	styleBLEDev   = lipgloss.NewStyle().Foreground(colorDeviceBLE).Bold(true)
 	styleClassDev = lipgloss.NewStyle().Foreground(colorDeviceCls).Bold(true)
+	styleWiFiDev  = lipgloss.NewStyle().Foreground(colorDeviceWiFi).Bold(true)
 	styleLegBLE   = lipgloss.NewStyle().Foreground(colorDeviceBLE)
 	styleLegClass = lipgloss.NewStyle().Foreground(colorDeviceCls)
+	styleLegWiFi  = lipgloss.NewStyle().Foreground(colorDeviceWiFi)
 	styleLabelBLE = lipgloss.NewStyle().Foreground(colorDeviceBLE)
 	styleLabelCls = lipgloss.NewStyle().Foreground(colorDeviceCls)
+	styleLabelWiFi = lipgloss.NewStyle().Foreground(colorDeviceWiFi)
 	styleLabelDim = lipgloss.NewStyle().Foreground(colorLabelDim)
 )
 
@@ -201,6 +205,7 @@ func deviceCallsign(d *bluetooth.Device) string {
 func styleLabelFor(d *bluetooth.Device, sweep *Sweep, col, row, centerX, centerY int, ch byte) string {
 	intensity := sweep.Intensity(CellAngle(col, row, centerX, centerY))
 	s := string(ch)
+	brightSty := lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 
 	if d.Name == "" {
 		if intensity > 0.5 {
@@ -209,17 +214,23 @@ func styleLabelFor(d *bluetooth.Device, sweep *Sweep, col, row, centerX, centerY
 		return styleLabelDim.Render(s)
 	}
 
-	if d.Type == bluetooth.DeviceTypeClassic {
+	switch d.Type {
+	case bluetooth.DeviceTypeClassic:
 		if intensity > 0.5 {
-			return lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render(s)
+			return brightSty.Render(s)
 		}
 		return styleLabelCls.Render(s)
+	case bluetooth.DeviceTypeWiFi:
+		if intensity > 0.5 {
+			return brightSty.Render(s)
+		}
+		return styleLabelWiFi.Render(s)
+	default:
+		if intensity > 0.5 {
+			return brightSty.Render(s)
+		}
+		return styleLabelBLE.Render(s)
 	}
-
-	if intensity > 0.5 {
-		return lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render(s)
-	}
-	return styleLabelBLE.Render(s)
 }
 
 func renderCell(col, row, centerX, centerY int, radius float64, ringRadii []float64, sweep *Sweep, devPositions []devPos) string {
@@ -263,18 +274,25 @@ func renderCell(col, row, centerX, centerY int, radius float64, ringRadii []floa
 
 func renderDevice(d *bluetooth.Device, sweep *Sweep, cellAngle float64) string {
 	intensity := sweep.Intensity(cellAngle)
+	brightSty := lipgloss.NewStyle().Foreground(colorBright).Bold(true)
 
-	if d.Type == bluetooth.DeviceTypeClassic {
+	switch d.Type {
+	case bluetooth.DeviceTypeClassic:
 		if intensity > 0.5 {
-			return lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render("B")
+			return brightSty.Render("B")
 		}
 		return styleClassDev.Render("B")
+	case bluetooth.DeviceTypeWiFi:
+		if intensity > 0.5 {
+			return brightSty.Render("W")
+		}
+		return styleWiFiDev.Render("W")
+	default:
+		if intensity > 0.5 {
+			return brightSty.Render("*")
+		}
+		return styleBLEDev.Render("*")
 	}
-
-	if intensity > 0.5 {
-		return lipgloss.NewStyle().Foreground(colorBright).Bold(true).Render("*")
-	}
-	return styleBLEDev.Render("*")
 }
 
 func renderSweepChar(ch rune, sweep *Sweep, angle float64) string {
@@ -316,7 +334,9 @@ func RenderLegend(width int) string {
 	legend := "   " +
 		styleLegBLE.Render("* BLE") +
 		"  " +
-		styleLegClass.Render("B Classic")
+		styleLegClass.Render("B Classic") +
+		"  " +
+		styleLegWiFi.Render("W WiFi")
 
 	pad := (width - lipgloss.Width(legend)) / 2
 	if pad < 0 {

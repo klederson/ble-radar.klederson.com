@@ -13,16 +13,21 @@ type DeviceType int
 const (
 	DeviceTypeBLE     DeviceType = iota
 	DeviceTypeClassic
+	DeviceTypeWiFi
 )
 
 func (dt DeviceType) String() string {
-	if dt == DeviceTypeClassic {
+	switch dt {
+	case DeviceTypeClassic:
 		return "Classic"
+	case DeviceTypeWiFi:
+		return "WiFi"
+	default:
+		return "BLE"
 	}
-	return "BLE"
 }
 
-// Device represents a discovered Bluetooth device.
+// Device represents a discovered Bluetooth or WiFi device.
 type Device struct {
 	MAC       string
 	Name      string
@@ -32,14 +37,31 @@ type Device struct {
 	Angle     float64 // Radians, 0=north, clockwise
 	Distance  float64 // Estimated distance in meters
 	Elevation float64 // [-1, +1], 0=same level, +1=above, -1=below
+	Frequency int     // MHz (e.g. 2437, 5180). Zero for BLE/Classic.
+	Channel   int     // WiFi channel number. Zero for BLE/Classic.
 }
 
 // Symbol returns the radar character for this device type.
 func (d *Device) Symbol() string {
-	if d.Type == DeviceTypeClassic {
+	switch d.Type {
+	case DeviceTypeClassic:
 		return "B"
+	case DeviceTypeWiFi:
+		return "W"
+	default:
+		return "*"
 	}
-	return "*"
+}
+
+// Band returns the WiFi frequency band label ("2.4G", "5G", or "").
+func (d *Device) Band() string {
+	if d.Frequency >= 5000 {
+		return "5G"
+	}
+	if d.Frequency >= 2400 {
+		return "2.4G"
+	}
+	return ""
 }
 
 // DisplayName returns the device name or "[unnamed]" if empty.

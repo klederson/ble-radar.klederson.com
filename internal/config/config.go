@@ -23,6 +23,7 @@ const (
 	// Scanner
 	ScanInterval   = 100 * time.Millisecond // BLE scan callback throttle
 	ClassicScanSec = 8                      // hcitool scan duration in seconds
+	WiFiScanSec    = 15                     // iw scan interval in seconds
 
 	// Demo mode
 	DemoDeviceMin = 8  // Minimum fake devices

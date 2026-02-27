@@ -38,6 +38,19 @@ func RenderDetailPanel(d *bluetooth.Device, width, height int, rssiHistory []flo
 		{"Last", formatLastSeen(d.LastSeen)},
 	}
 
+	if d.Type == bluetooth.DeviceTypeWiFi {
+		if d.Frequency > 0 {
+			fields = append(fields, struct{ label, value string }{
+				"Frequency", fmt.Sprintf("%d MHz (%s)", d.Frequency, d.Band()),
+			})
+		}
+		if d.Channel > 0 {
+			fields = append(fields, struct{ label, value string }{
+				"Channel", fmt.Sprintf("%d", d.Channel),
+			})
+		}
+	}
+
 	for _, f := range fields {
 		label := labelSty.Render(fmt.Sprintf("  %-10s", f.label))
 		value := valSty.Render(f.value)

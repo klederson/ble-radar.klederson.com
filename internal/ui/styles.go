@@ -11,6 +11,7 @@ var (
 	ColorBlack       = lipgloss.Color("#000000")
 	ColorDeviceBLE   = lipgloss.Color("#00FFAA")
 	ColorDeviceClass = lipgloss.Color("#33FF66")
+	ColorDeviceWiFi  = lipgloss.Color("#FFCC00")
 	ColorBorderBright= lipgloss.Color("#00FF41")
 	ColorBorderNorm  = lipgloss.Color("#00AA22")
 	ColorError       = lipgloss.Color("#FF3300")
@@ -79,6 +80,16 @@ var (
 
 	StyleDeviceTypeClassic = lipgloss.NewStyle().
 				Foreground(ColorDeviceClass)
+
+	StyleDeviceTypeWiFi = lipgloss.NewStyle().
+				Foreground(ColorDeviceWiFi)
+
+	StyleFilterActive = lipgloss.NewStyle().
+				Foreground(ColorMatrixGreen).
+				Bold(true)
+
+	StyleFilterInactive = lipgloss.NewStyle().
+				Foreground(ColorDimGreen)
 
 	StyleRadarCenter = lipgloss.NewStyle().
 			Foreground(ColorMatrixGreen).

@@ -9,10 +9,12 @@ import (
 
 // DeviceDiscoveredMsg is sent via tea.Program.Send when a device is found.
 type DeviceDiscoveredMsg struct {
-	MAC  string
-	Name string
-	RSSI int16
-	Type DeviceType
+	MAC       string
+	Name      string
+	RSSI      int16
+	Type      DeviceType
+	Frequency int // MHz, zero for BLE/Classic
+	Channel   int // WiFi channel, zero for BLE/Classic
 }
 
 // BLEScanner handles Bluetooth Low Energy scanning.

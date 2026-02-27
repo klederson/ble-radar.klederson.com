@@ -8,12 +8,17 @@ import (
 )
 
 // RenderMenuBar renders the top menu bar with context-aware key hints.
-func RenderMenuBar(width int, adapter string, scanning bool, detailOpen bool) string {
+func RenderMenuBar(width int, adapter string, scanning bool, detailOpen bool, filterActive bool) string {
 	title := fmt.Sprintf(" %s v%s ", config.AppName, config.AppVersion)
 
 	var keys []struct{ key, label string }
 
-	if detailOpen {
+	if filterActive {
+		keys = []struct{ key, label string }{
+			{"Type", " to search"},
+			{"Esc", " done"},
+		}
+	} else if detailOpen {
 		keys = []struct{ key, label string }{
 			{"Esc", " close"},
 			{"j/k", " navigate"},
@@ -24,8 +29,8 @@ func RenderMenuBar(width int, adapter string, scanning bool, detailOpen bool) st
 			{"Enter", " detail"},
 			{"Space", " toggle"},
 			{"I", "solate"},
-			{"S", "can"},
-			{"P", "ause"},
+			{"/", " search"},
+			{"1/2/3", " filter"},
 			{"Q", "uit"},
 		}
 	}
